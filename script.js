@@ -137,7 +137,7 @@ function sortByLikelihood(patterns) {
 }
 
 // ── Canvas drawing helpers ─────────────────────────────────────
-function drawGrid(ctx, pattern = [], size = 240, { dotColor = '#444', lineColor = '#888', activeColor = '#fff', highlightLast = false, found = false } = {}) {
+function drawGrid(ctx, pattern = [], size = 240, { dotColor = '#444', lineColor = '#888', activeColor = '#fff', highlightLast = false, found = false, trailTo = null } = {}) {
   const pad = size * 0.2;
   const cell = (size - pad * 2) / 2;
   const dotRadius = size * 14 / 240;
@@ -158,6 +158,17 @@ function drawGrid(ctx, pattern = [], size = 240, { dotColor = '#444', lineColor 
       const p = dotPos(pattern[i], size);
       ctx.lineTo(p.x, p.y);
     }
+    ctx.stroke();
+  }
+  // Draw trailing line from last dot to finger/cursor position
+  if (trailTo && pattern.length > 0) {
+    const pLast = dotPos(pattern[pattern.length - 1], size);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pLast.x, pLast.y);
+    ctx.lineTo(trailTo.x, trailTo.y);
     ctx.stroke();
   }
   // Draw dots
@@ -205,13 +216,67 @@ const targetCanvas = document.getElementById('targetCanvas');
 const targetCtx = targetCanvas.getContext('2d');
 let targetPattern = [];
 function redrawTarget() {
+  redrawTargetWithTrail();
+}
+// ── Drag / touch input for target pattern ─────────────────────
+let dragging = false;
+let dragTrail = null;
+
+function getCanvasCoords(e) {
+  const rect = targetCanvas.getBoundingClientRect();
+  const size = targetCanvas.width;
+  const scaleX = size / rect.width;
+  const scaleY = size / rect.height;
+  let clientX, clientY;
+  if (e.touches && e.touches.length > 0) {
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else if (e.changedTouches && e.changedTouches.length > 0) {
+    clientX = e.changedTouches[0].clientX;
+    clientY = e.changedTouches[0].clientY;
+  } else {
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+function hitTestDot(mx, my) {
+  const size = targetCanvas.width;
+  const hitRadius = (size * 14 / 240) + 8;
+  for (let i = 0; i < 9; i++) {
+    const { x, y } = dotPos(i, size);
+    if (Math.sqrt((mx - x) ** 2 + (my - y) ** 2) < hitRadius) return i;
+  }
+  return -1;
+}
+
+function tryAddDot(dotIndex) {
+  if (dotIndex < 0 || targetPattern.includes(dotIndex)) return false;
+  if (targetPattern.length === 0) {
+    targetPattern.push(dotIndex);
+  } else if (isValidMove(targetPattern[targetPattern.length - 1], dotIndex, new Set(targetPattern))) {
+    targetPattern.push(dotIndex);
+  } else {
+    return false;
+  }
+  playConnectSound();
+  return true;
+}
+
+function redrawTargetWithTrail() {
   const size = targetCanvas.width;
   drawGrid(targetCtx, targetPattern, size, {
     lineColor: '#999',
     activeColor: '#fff',
     highlightLast: true,
-    found: false
+    found: false,
+    trailTo: dragging ? dragTrail : null
   });
+  // Update display text
   const display = document.getElementById('targetDisplay');
   if (targetPattern.length === 0) {
     display.innerHTML = 'No target set';
@@ -222,35 +287,48 @@ function redrawTarget() {
   }
   document.getElementById('startBtn').disabled = targetPattern.length < 4 || running;
 }
-targetCanvas.addEventListener('click', (e) => {
+
+function onDragStart(e) {
   if (running) return;
-  const rect = targetCanvas.getBoundingClientRect();
-  const size = targetCanvas.width;
-  const scaleX = size / rect.width;
-  const scaleY = size / rect.height;
-  const mx = (e.clientX - rect.left) * scaleX;
-  const my = (e.clientY - rect.top) * scaleY;
-  const hitRadius = (size * 14 / 240) + 6;
-  for (let i = 0; i < 9; i++) {
-    const { x, y } = dotPos(i, size);
-    const dist = Math.sqrt((mx - x) ** 2 + (my - y) ** 2);
-    if (dist < hitRadius) {
-      if (targetPattern.includes(i)) {
-        break;
-      }
-      if (targetPattern.length === 0) {
-        targetPattern.push(i);
-      } else if (isValidMove(targetPattern[targetPattern.length - 1], i, new Set(targetPattern))) {
-        targetPattern.push(i);
-      } else {
-        break;
-      }
-      playConnectSound();
-      redrawTarget();
-      break;
-    }
-  }
-});
+  e.preventDefault();
+  targetPattern = [];
+  dragging = true;
+  const { x, y } = getCanvasCoords(e);
+  dragTrail = { x, y };
+  const dot = hitTestDot(x, y);
+  if (dot >= 0) tryAddDot(dot);
+  redrawTargetWithTrail();
+}
+
+function onDragMove(e) {
+  if (!dragging) return;
+  e.preventDefault();
+  const { x, y } = getCanvasCoords(e);
+  dragTrail = { x, y };
+  const dot = hitTestDot(x, y);
+  if (dot >= 0) tryAddDot(dot);
+  redrawTargetWithTrail();
+}
+
+function onDragEnd(e) {
+  if (!dragging) return;
+  e.preventDefault();
+  dragging = false;
+  dragTrail = null;
+  redrawTargetWithTrail();
+}
+
+// Mouse events
+targetCanvas.addEventListener('mousedown', onDragStart);
+targetCanvas.addEventListener('mousemove', onDragMove);
+targetCanvas.addEventListener('mouseup', onDragEnd);
+targetCanvas.addEventListener('mouseleave', onDragEnd);
+
+// Touch events
+targetCanvas.addEventListener('touchstart', onDragStart, { passive: false });
+targetCanvas.addEventListener('touchmove', onDragMove, { passive: false });
+targetCanvas.addEventListener('touchend', onDragEnd, { passive: false });
+targetCanvas.addEventListener('touchcancel', onDragEnd, { passive: false });
 document.getElementById('clearTarget').addEventListener('click', () => {
   if (running) return;
   targetPattern = [];
