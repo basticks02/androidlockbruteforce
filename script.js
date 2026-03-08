@@ -2,13 +2,11 @@
 // Grid: 0 1 2
 //        3 4 5
 //        6 7 8
-const DOT_RADIUS = 14;
-const GRID_PAD = 48;
-const GRID_SIZE = 240;
-const CELL = (GRID_SIZE - GRID_PAD * 2) / 2;
-function dotPos(i) {
+function dotPos(i, size = 240) {
+  const pad = size * 0.2;
+  const cell = (size - pad * 2) / 2;
   const col = i % 3, row = Math.floor(i / 3);
-  return { x: GRID_PAD + col * CELL, y: GRID_PAD + row * CELL };
+  return { x: pad + col * cell, y: pad + row * cell };
 }
 // ── Sound effect ──────────────────────────────────────────────
 function playConnectSound() {
@@ -28,7 +26,6 @@ function playConnectSound() {
   }
 }
 // ── Android skip rules ─────────────────────────────────────────
-// If going from a→b, and mid is between them, mid must be visited already.
 const SKIP_MAP = {};
 function addSkip(a, b, mid) {
   SKIP_MAP[`${a},${b}`] = mid;
@@ -72,9 +69,82 @@ function generateAllPatterns(minLen = 4) {
   }
   return results;
 }
+// ── Human-likelihood scoring ──────────────────────────────────
+// Lower score = more likely a human would pick this pattern.
+// People prefer: corners, edges first, continuing same direction,
+// adjacent moves, shorter patterns.
+const CORNERS = new Set([0, 2, 6, 8]);
+const EDGES = new Set([1, 3, 5, 7]);
+const PERIMETER = new Set([0, 1, 2, 3, 5, 6, 7, 8]);
+
+function scorePattern(pattern) {
+  let score = 0;
+  const start = pattern[0];
+
+  // Starting position: top-left most common, then corners, edges, center
+  if (start === 0) score -= 3;
+  else if (CORNERS.has(start)) score -= 2;
+  else if (EDGES.has(start)) score -= 1;
+  else score += 2;
+
+  // Shorter patterns are far more common (4-5 dots)
+  score += (pattern.length - 4) * 3;
+
+  for (let i = 1; i < pattern.length; i++) {
+    const prev = pattern[i - 1];
+    const curr = pattern[i];
+    const prevCol = prev % 3, prevRow = Math.floor(prev / 3);
+    const currCol = curr % 3, currRow = Math.floor(curr / 3);
+    const dx = Math.abs(currCol - prevCol);
+    const dy = Math.abs(currRow - prevRow);
+
+    // Adjacent/diagonal moves are natural, jumps are unusual
+    if (dx <= 1 && dy <= 1) {
+      score -= 1;
+    } else {
+      score += 3;
+    }
+
+    // Staying on the perimeter is preferred (people trace edges first)
+    if (PERIMETER.has(curr)) {
+      score -= 1;
+    } else {
+      score += 1;
+    }
+
+    // Direction continuity: continuing the same sweep direction is very human
+    // e.g. 1→2→3→6 (right then down along edge)
+    if (i >= 2) {
+      const prevPrev = pattern[i - 2];
+      const ppCol = prevPrev % 3, ppRow = Math.floor(prevPrev / 3);
+      const s1x = Math.sign(prevCol - ppCol), s1y = Math.sign(prevRow - ppRow);
+      const s2x = Math.sign(currCol - prevCol), s2y = Math.sign(currRow - prevRow);
+      if (s1x === s2x && s1y === s2y) {
+        score -= 3; // same direction = very likely
+      } else if (s1x === s2x || s1y === s2y) {
+        score -= 1; // partial continuity (same axis)
+      }
+    }
+  }
+  return score;
+}
+
+function sortByLikelihood(patterns) {
+  // Pre-compute scores then sort ascending (lowest = most human-like first)
+  const scored = patterns.map((p, i) => ({ p, s: scorePattern(p), i }));
+  scored.sort((a, b) => a.s - b.s || a.i - b.i);
+  return scored.map(x => x.p);
+}
+
 // ── Canvas drawing helpers ─────────────────────────────────────
-function drawGrid(ctx, pattern = [], { dotColor = '#334', lineColor = '#4466cc', activeColor = '#6688ff', highlightLast = false, found = false } = {}) {
-  ctx.clearRect(0, 0, GRID_SIZE, GRID_SIZE);
+function drawGrid(ctx, pattern = [], size = 240, { dotColor = '#444', lineColor = '#888', activeColor = '#fff', highlightLast = false, found = false, trailTo = null } = {}) {
+  const pad = size * 0.2;
+  const cell = (size - pad * 2) / 2;
+  const dotRadius = size * 14 / 240;
+  const innerRadius = size * 5 / 240;
+  const fontSize = Math.round(size * 10 / 240);
+
+  ctx.clearRect(0, 0, size, size);
   // Draw lines
   if (pattern.length > 1) {
     ctx.strokeStyle = found ? '#44dd88' : lineColor;
@@ -82,29 +152,40 @@ function drawGrid(ctx, pattern = [], { dotColor = '#334', lineColor = '#4466cc',
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.beginPath();
-    const p0 = dotPos(pattern[0]);
+    const p0 = dotPos(pattern[0], size);
     ctx.moveTo(p0.x, p0.y);
     for (let i = 1; i < pattern.length; i++) {
-      const p = dotPos(pattern[i]);
+      const p = dotPos(pattern[i], size);
       ctx.lineTo(p.x, p.y);
     }
+    ctx.stroke();
+  }
+  // Draw trailing line from last dot to finger/cursor position
+  if (trailTo && pattern.length > 0) {
+    const pLast = dotPos(pattern[pattern.length - 1], size);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pLast.x, pLast.y);
+    ctx.lineTo(trailTo.x, trailTo.y);
     ctx.stroke();
   }
   // Draw dots
   const patternSet = new Set(pattern);
   for (let i = 0; i < 9; i++) {
-    const { x, y } = dotPos(i);
+    const { x, y } = dotPos(i, size);
     const inPattern = patternSet.has(i);
     const isLast = highlightLast && pattern.length > 0 && pattern[pattern.length - 1] === i;
     // Outer ring
     ctx.beginPath();
-    ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+    ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
     if (found && inPattern) {
-      ctx.fillStyle = '#1a4a2a';
+      ctx.fillStyle = '#1a3a2a';
     } else if (inPattern) {
-      ctx.fillStyle = '#1a1a4a';
+      ctx.fillStyle = '#222';
     } else {
-      ctx.fillStyle = '#1a1a2a';
+      ctx.fillStyle = '#111';
     }
     ctx.fill();
     ctx.strokeStyle = inPattern ? (found ? '#44dd88' : activeColor) : dotColor;
@@ -112,22 +193,22 @@ function drawGrid(ctx, pattern = [], { dotColor = '#334', lineColor = '#4466cc',
     ctx.stroke();
     // Inner dot
     ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.arc(x, y, innerRadius, 0, Math.PI * 2);
     if (found && inPattern) {
       ctx.fillStyle = '#44dd88';
     } else if (isLast) {
-      ctx.fillStyle = '#aabbff';
+      ctx.fillStyle = '#ccc';
     } else if (inPattern) {
       ctx.fillStyle = activeColor;
     } else {
-      ctx.fillStyle = '#445';
+      ctx.fillStyle = '#333';
     }
     ctx.fill();
     // Number label
-    ctx.fillStyle = inPattern ? (found ? '#88ffbb' : '#aabbff') : '#444';
-    ctx.font = '10px system-ui';
+    ctx.fillStyle = inPattern ? (found ? '#44dd88' : '#ccc') : '#444';
+    ctx.font = `${fontSize}px 'Source Code Pro', monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(i + 1, x, y + DOT_RADIUS + 12);
+    ctx.fillText(i + 1, x, y + dotRadius + Math.round(size * 12 / 240));
   }
 }
 // ── Target pattern UI ──────────────────────────────────────────
@@ -135,49 +216,156 @@ const targetCanvas = document.getElementById('targetCanvas');
 const targetCtx = targetCanvas.getContext('2d');
 let targetPattern = [];
 function redrawTarget() {
-  drawGrid(targetCtx, targetPattern, {
-    lineColor: '#22aa66',
-    activeColor: '#44dd88',
+  redrawTargetWithTrail();
+}
+// ── Drag / touch input for target pattern ─────────────────────
+let dragging = false;
+let dragTrail = null;
+let lastDragPos = null;
+
+function getCanvasCoords(e) {
+  const rect = targetCanvas.getBoundingClientRect();
+  const size = targetCanvas.width;
+  const scaleX = size / rect.width;
+  const scaleY = size / rect.height;
+  let clientX, clientY;
+  if (e.touches && e.touches.length > 0) {
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else if (e.changedTouches && e.changedTouches.length > 0) {
+    clientX = e.changedTouches[0].clientX;
+    clientY = e.changedTouches[0].clientY;
+  } else {
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+function hitTestDot(mx, my) {
+  const size = targetCanvas.width;
+  // Generous hit radius for easier dragging
+  const hitRadius = (size * 14 / 240) + size * 0.06;
+  for (let i = 0; i < 9; i++) {
+    const { x, y } = dotPos(i, size);
+    if (Math.sqrt((mx - x) ** 2 + (my - y) ** 2) < hitRadius) return i;
+  }
+  return -1;
+}
+
+// Check if point (px,py) is close to the line segment from (ax,ay) to (bx,by)
+function pointNearSegment(px, py, ax, ay, bx, by, threshold) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2) < threshold;
+  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = ax + t * dx, projY = ay + t * dy;
+  return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2) < threshold;
+}
+
+// Check all unvisited dots along the drag path and add any the line passes through
+function collectDotsAlongPath(fromX, fromY, toX, toY) {
+  const size = targetCanvas.width;
+  const threshold = (size * 14 / 240) + size * 0.04;
+  const visited = new Set(targetPattern);
+  // Collect dots near the drag line, sorted by distance from 'from' point
+  const candidates = [];
+  for (let i = 0; i < 9; i++) {
+    if (visited.has(i)) continue;
+    const { x, y } = dotPos(i, size);
+    if (pointNearSegment(x, y, fromX, fromY, toX, toY, threshold)) {
+      const dist = (x - fromX) ** 2 + (y - fromY) ** 2;
+      candidates.push({ dot: i, dist });
+    }
+  }
+  candidates.sort((a, b) => a.dist - b.dist);
+  for (const c of candidates) {
+    tryAddDot(c.dot);
+  }
+}
+
+function tryAddDot(dotIndex) {
+  if (dotIndex < 0 || targetPattern.includes(dotIndex)) return false;
+  if (targetPattern.length === 0) {
+    targetPattern.push(dotIndex);
+  } else if (isValidMove(targetPattern[targetPattern.length - 1], dotIndex, new Set(targetPattern))) {
+    targetPattern.push(dotIndex);
+  } else {
+    return false;
+  }
+  playConnectSound();
+  return true;
+}
+
+function redrawTargetWithTrail() {
+  const size = targetCanvas.width;
+  drawGrid(targetCtx, targetPattern, size, {
+    lineColor: '#999',
+    activeColor: '#fff',
     highlightLast: true,
-    found: false
+    found: false,
+    trailTo: dragging ? dragTrail : null
   });
   const display = document.getElementById('targetDisplay');
   if (targetPattern.length === 0) {
     display.innerHTML = 'No target set';
   } else if (targetPattern.length < 4) {
-    display.innerHTML = `Pattern: <span>${targetPattern.map(d => d + 1).join(' → ')}</span> (need ${4 - targetPattern.length} more)`;
+    display.innerHTML = `<span>${targetPattern.map(d => d + 1).join(' → ')}</span> (need ${4 - targetPattern.length} more)`;
   } else {
-    display.innerHTML = `Target: <span>${targetPattern.map(d => d + 1).join(' → ')}</span> (${targetPattern.length} dots)`;
+    display.innerHTML = `<span>${targetPattern.map(d => d + 1).join(' → ')}</span> (${targetPattern.length} dots)`;
   }
   document.getElementById('startBtn').disabled = targetPattern.length < 4 || running;
 }
-targetCanvas.addEventListener('click', (e) => {
+
+function onDragStart(e) {
   if (running) return;
-  const rect = targetCanvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-  for (let i = 0; i < 9; i++) {
-    const { x, y } = dotPos(i);
-    const dist = Math.sqrt((mx - x) ** 2 + (my - y) ** 2);
-    if (dist < DOT_RADIUS + 6) {
-      // Check if valid move
-      if (targetPattern.includes(i)) {
-        // If clicking the last dot again, finalize
-        break;
-      }
-      if (targetPattern.length === 0) {
-        targetPattern.push(i);
-      } else if (isValidMove(targetPattern[targetPattern.length - 1], i, new Set(targetPattern))) {
-        targetPattern.push(i);
-      } else {
-        // Flash red briefly
-        break;
-      }
-      playConnectSound();
-      redrawTarget();
-      break;
-    }
+  e.preventDefault();
+  targetPattern = [];
+  dragging = true;
+  const { x, y } = getCanvasCoords(e);
+  dragTrail = { x, y };
+  lastDragPos = { x, y };
+  const dot = hitTestDot(x, y);
+  if (dot >= 0) tryAddDot(dot);
+  redrawTargetWithTrail();
+}
+
+function onDragMove(e) {
+  if (!dragging) return;
+  e.preventDefault();
+  const { x, y } = getCanvasCoords(e);
+  dragTrail = { x, y };
+  // Check for dots along the path from last position to current
+  if (lastDragPos) {
+    collectDotsAlongPath(lastDragPos.x, lastDragPos.y, x, y);
   }
-});
+  lastDragPos = { x, y };
+  redrawTargetWithTrail();
+}
+
+function onDragEnd(e) {
+  if (!dragging) return;
+  e.preventDefault();
+  dragging = false;
+  dragTrail = null;
+  lastDragPos = null;
+  redrawTargetWithTrail();
+}
+
+// Mouse: start on canvas, track moves and release on document so fast drags work
+targetCanvas.addEventListener('mousedown', onDragStart);
+document.addEventListener('mousemove', onDragMove);
+document.addEventListener('mouseup', onDragEnd);
+
+// Touch: all on canvas with passive: false to prevent scrolling
+targetCanvas.addEventListener('touchstart', onDragStart, { passive: false });
+targetCanvas.addEventListener('touchmove', onDragMove, { passive: false });
+targetCanvas.addEventListener('touchend', onDragEnd, { passive: false });
+targetCanvas.addEventListener('touchcancel', onDragEnd, { passive: false });
 document.getElementById('clearTarget').addEventListener('click', () => {
   if (running) return;
   targetPattern = [];
@@ -187,7 +375,7 @@ redrawTarget();
 // ── Brute force canvas ────────────────────────────────────────
 const bruteCanvas = document.getElementById('bruteCanvas');
 const bruteCtx = bruteCanvas.getContext('2d');
-drawGrid(bruteCtx);
+drawGrid(bruteCtx, [], bruteCanvas.width);
 // ── Speed settings ─────────────────────────────────────────────
 const SPEED_LEVELS = [
   { label: '1/s', delay: 1000 },
@@ -204,22 +392,40 @@ speedSlider.addEventListener('input', () => {
   speedLabel.textContent = SPEED_LEVELS[speedSlider.value].label;
 });
 speedLabel.textContent = SPEED_LEVELS[speedSlider.value].label;
-// ── Stats ──────────────────────────────────────────────────────
-const elAttempts = document.getElementById('attemptCount');
-const elTotal = document.getElementById('totalPatterns');
-const elElapsed = document.getElementById('elapsed');
-const elStatus = document.getElementById('status');
-const elCurrent = document.getElementById('currentAttempt');
+// ── Terminal & Stats ──────────────────────────────────────────
 const elProgress = document.getElementById('progressFill');
 const elProgressText = document.getElementById('progressText');
 const elLog = document.getElementById('logBox');
+const elTerminalStatus = document.getElementById('terminalStatus');
+
+function updateTerminalStatus(status, attempts, total, elapsed, currentPattern) {
+  let text = `[${status}]`;
+  if (total > 0) {
+    text += ` ${attempts.toLocaleString()} / ${total.toLocaleString()}`;
+  }
+  if (elapsed !== null) {
+    text += ` | ${elapsed}s`;
+  }
+  if (currentPattern) {
+    text += ` | ${currentPattern}`;
+  }
+  elTerminalStatus.textContent = text;
+
+  // Update class for color
+  elTerminalStatus.className = 'terminal-status';
+  if (status === 'FOUND') {
+    elTerminalStatus.classList.add('found');
+  } else if (status === 'SEARCHING') {
+    elTerminalStatus.classList.add('searching');
+  }
+}
+
 function addLog(text, cls = '') {
   const div = document.createElement('div');
   div.className = cls;
-  div.textContent = text;
+  div.textContent = '> ' + text;
   elLog.appendChild(div);
   elLog.scrollTop = elLog.scrollHeight;
-  // Keep max 200 entries
   while (elLog.children.length > 200) elLog.removeChild(elLog.firstChild);
 }
 // ── Brute Force Engine ─────────────────────────────────────────
@@ -233,36 +439,36 @@ async function runBruteForce() {
   document.getElementById('clearTarget').disabled = true;
   document.getElementById('minLength').disabled = true;
   elLog.innerHTML = '';
-  elStatus.textContent = 'Generating...';
-  elStatus.className = 'value searching';
+  updateTerminalStatus('GENERATING', 0, 0, null, null);
   // Generate patterns
   const minLen = parseInt(document.getElementById('minLength').value);
-  await new Promise(r => setTimeout(r, 50)); // let UI update
-  const allPatterns = generateAllPatterns(minLen);
+  await new Promise(r => setTimeout(r, 50));
+  const rawPatterns = generateAllPatterns(minLen);
+  addLog(`${rawPatterns.length.toLocaleString()} patterns (min ${minLen} dots)`);
+  updateTerminalStatus('SORTING', 0, 0, null, null);
+  addLog('sorting by human likelihood...');
+  await new Promise(r => setTimeout(r, 10));
+  const allPatterns = sortByLikelihood(rawPatterns);
   const total = allPatterns.length;
-  elTotal.textContent = total.toLocaleString();
-  addLog(`Generated ${total.toLocaleString()} valid patterns (min ${minLen} dots)`);
-  addLog(`Target: [${targetPattern.map(d => d + 1).join(', ')}]`);
-  addLog('Starting brute force...');
-  elStatus.textContent = 'Searching';
+  addLog(`target: [${targetPattern.map(d => d + 1).join(', ')}]`);
+  addLog('searching (common patterns first)...');
+  updateTerminalStatus('SEARCHING', 0, total, '0.0', null);
   const targetStr = targetPattern.join(',');
   let attempts = 0;
   const startTime = performance.now();
   let lastDraw = performance.now();
   for (let i = 0; i < total; i++) {
     if (stopRequested) {
-      elStatus.textContent = 'Stopped';
-      addLog(`Stopped after ${attempts.toLocaleString()} attempts`);
+      updateTerminalStatus('STOPPED', attempts, total, ((performance.now() - startTime) / 1000).toFixed(1), null);
+      addLog(`stopped after ${attempts.toLocaleString()} attempts`);
       break;
     }
     const pattern = allPatterns[i];
     attempts++;
     const speed = SPEED_LEVELS[speedSlider.value];
     const now = performance.now();
-    // Decide whether to draw this frame
     let shouldDraw = false;
     if (speed.delay === 0) {
-      // Max speed: draw every ~30ms
       if (now - lastDraw > 30) shouldDraw = true;
     } else if (speed.delay < 1) {
       if (now - lastDraw > 1) shouldDraw = true;
@@ -271,29 +477,26 @@ async function runBruteForce() {
     }
     const matched = pattern.join(',') === targetStr;
     if (shouldDraw || matched) {
-      drawGrid(bruteCtx, pattern, { highlightLast: true, found: matched });
-      elAttempts.textContent = attempts.toLocaleString();
-      elCurrent.textContent = pattern.map(d => d + 1).join(' → ');
+      drawGrid(bruteCtx, pattern, bruteCanvas.width, { highlightLast: true, found: matched });
+      const patternStr = pattern.map(d => d + 1).join(' → ');
       const pct = ((attempts / total) * 100).toFixed(1);
       elProgress.style.width = pct + '%';
-      elProgressText.textContent = `${pct}% (${attempts.toLocaleString()} / ${total.toLocaleString()})`;
+      elProgressText.textContent = `${pct}%`;
       const elapsed = ((now - startTime) / 1000).toFixed(1);
-      elElapsed.textContent = elapsed + 's';
+      updateTerminalStatus('SEARCHING', attempts, total, elapsed, patternStr);
       lastDraw = now;
     }
     if (matched) {
-      elStatus.textContent = 'FOUND!';
-      elStatus.className = 'value found';
       const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-      addLog(`FOUND pattern [${pattern.map(d => d + 1).join(', ')}] after ${attempts.toLocaleString()} attempts in ${elapsed}s`, 'hit');
-      drawGrid(bruteCtx, pattern, { found: true });
+      updateTerminalStatus('FOUND', attempts, total, elapsed, pattern.map(d => d + 1).join(' → '));
+      addLog(`FOUND [${pattern.map(d => d + 1).join(', ')}] in ${attempts.toLocaleString()} attempts, ${elapsed}s`, 'hit');
+      drawGrid(bruteCtx, pattern, bruteCanvas.width, { found: true });
       break;
     }
     // Pacing
     if (speed.delay > 0) {
       await new Promise(r => setTimeout(r, speed.delay));
     } else if (speed.delay === 0) {
-      // Yield to UI occasionally at max speed
       if (attempts % 500 === 0) {
         await new Promise(r => setTimeout(r, 0));
       }
@@ -303,14 +506,16 @@ async function runBruteForce() {
       }
     }
   }
-  if (!stopRequested && elStatus.textContent === 'Searching') {
-    elStatus.textContent = 'Not Found';
-    addLog('Pattern not found in generated set.');
+  if (!stopRequested && !elTerminalStatus.classList.contains('found')) {
+    const finalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+    updateTerminalStatus('NOT FOUND', attempts, total, finalElapsed, null);
+    addLog('pattern not found in generated set.');
   }
-  // Final stats update
+  // Final stats
   const finalElapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-  elElapsed.textContent = finalElapsed + 's';
-  elAttempts.textContent = attempts.toLocaleString();
+  if (elTerminalStatus.classList.contains('found')) {
+    // Already updated
+  }
   running = false;
   document.getElementById('startBtn').disabled = targetPattern.length < 4;
   document.getElementById('stopBtn').disabled = true;
@@ -319,5 +524,27 @@ async function runBruteForce() {
 }
 document.getElementById('startBtn').addEventListener('click', runBruteForce);
 document.getElementById('stopBtn').addEventListener('click', () => { stopRequested = true; });
-// Initial draw
-drawGrid(bruteCtx);
+// ── Responsive canvas resize ──────────────────────────────────
+function resizeCanvases() {
+  const targetWrapper = targetCanvas.parentElement;
+  const targetSize = targetWrapper.clientWidth;
+  if (targetSize > 0) {
+    targetCanvas.width = targetSize;
+    targetCanvas.height = targetSize;
+    redrawTarget();
+  }
+  const bruteWrapper = bruteCanvas.parentElement;
+  const bruteSize = bruteWrapper.clientWidth;
+  if (bruteSize > 0) {
+    bruteCanvas.width = bruteSize;
+    bruteCanvas.height = bruteSize;
+    drawGrid(bruteCtx, [], bruteSize);
+  }
+}
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resizeCanvases, 150);
+});
+// Initial sizing
+resizeCanvases();
