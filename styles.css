@@ -10,7 +10,6 @@ body {
 }
 .container {
   display: flex;
-  flex-wrap: wrap;
   justify-content: center;
   gap: 32px;
   align-items: flex-start;
@@ -23,7 +22,8 @@ body {
   border: 1px solid #333;
   border-radius: 12px;
   padding: 24px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   max-width: 420px;
   transition: border-color 0.2s ease;
 }
@@ -327,14 +327,20 @@ input[type="range"]:hover {
 .log-box::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
-/* Tablet */
+/* Tablet & below: stack panels vertically */
 @media (max-width: 900px) {
   body {
     align-items: flex-start;
   }
   .container {
+    flex-direction: column;
+    align-items: center;
     padding: 20px;
     gap: 20px;
+  }
+  .panel {
+    width: 100%;
+    max-width: 420px;
   }
 }
 /* Mobile */
