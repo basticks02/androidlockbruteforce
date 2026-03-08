@@ -69,6 +69,73 @@ function generateAllPatterns(minLen = 4) {
   }
   return results;
 }
+// ── Human-likelihood scoring ──────────────────────────────────
+// Lower score = more likely a human would pick this pattern.
+// People prefer: corners, edges first, continuing same direction,
+// adjacent moves, shorter patterns.
+const CORNERS = new Set([0, 2, 6, 8]);
+const EDGES = new Set([1, 3, 5, 7]);
+const PERIMETER = new Set([0, 1, 2, 3, 5, 6, 7, 8]);
+
+function scorePattern(pattern) {
+  let score = 0;
+  const start = pattern[0];
+
+  // Starting position: top-left most common, then corners, edges, center
+  if (start === 0) score -= 3;
+  else if (CORNERS.has(start)) score -= 2;
+  else if (EDGES.has(start)) score -= 1;
+  else score += 2;
+
+  // Shorter patterns are far more common (4-5 dots)
+  score += (pattern.length - 4) * 3;
+
+  for (let i = 1; i < pattern.length; i++) {
+    const prev = pattern[i - 1];
+    const curr = pattern[i];
+    const prevCol = prev % 3, prevRow = Math.floor(prev / 3);
+    const currCol = curr % 3, currRow = Math.floor(curr / 3);
+    const dx = Math.abs(currCol - prevCol);
+    const dy = Math.abs(currRow - prevRow);
+
+    // Adjacent/diagonal moves are natural, jumps are unusual
+    if (dx <= 1 && dy <= 1) {
+      score -= 1;
+    } else {
+      score += 3;
+    }
+
+    // Staying on the perimeter is preferred (people trace edges first)
+    if (PERIMETER.has(curr)) {
+      score -= 1;
+    } else {
+      score += 1;
+    }
+
+    // Direction continuity: continuing the same sweep direction is very human
+    // e.g. 1→2→3→6 (right then down along edge)
+    if (i >= 2) {
+      const prevPrev = pattern[i - 2];
+      const ppCol = prevPrev % 3, ppRow = Math.floor(prevPrev / 3);
+      const s1x = Math.sign(prevCol - ppCol), s1y = Math.sign(prevRow - ppRow);
+      const s2x = Math.sign(currCol - prevCol), s2y = Math.sign(currRow - prevRow);
+      if (s1x === s2x && s1y === s2y) {
+        score -= 3; // same direction = very likely
+      } else if (s1x === s2x || s1y === s2y) {
+        score -= 1; // partial continuity (same axis)
+      }
+    }
+  }
+  return score;
+}
+
+function sortByLikelihood(patterns) {
+  // Pre-compute scores then sort ascending (lowest = most human-like first)
+  const scored = patterns.map((p, i) => ({ p, s: scorePattern(p), i }));
+  scored.sort((a, b) => a.s - b.s || a.i - b.i);
+  return scored.map(x => x.p);
+}
+
 // ── Canvas drawing helpers ─────────────────────────────────────
 function drawGrid(ctx, pattern = [], size = 240, { dotColor = '#444', lineColor = '#888', activeColor = '#fff', highlightLast = false, found = false } = {}) {
   const pad = size * 0.2;
@@ -261,11 +328,15 @@ async function runBruteForce() {
   // Generate patterns
   const minLen = parseInt(document.getElementById('minLength').value);
   await new Promise(r => setTimeout(r, 50));
-  const allPatterns = generateAllPatterns(minLen);
+  const rawPatterns = generateAllPatterns(minLen);
+  addLog(`${rawPatterns.length.toLocaleString()} patterns (min ${minLen} dots)`);
+  updateTerminalStatus('SORTING', 0, 0, null, null);
+  addLog('sorting by human likelihood...');
+  await new Promise(r => setTimeout(r, 10));
+  const allPatterns = sortByLikelihood(rawPatterns);
   const total = allPatterns.length;
-  addLog(`${total.toLocaleString()} patterns (min ${minLen} dots)`);
   addLog(`target: [${targetPattern.map(d => d + 1).join(', ')}]`);
-  addLog('searching...');
+  addLog('searching (common patterns first)...');
   updateTerminalStatus('SEARCHING', 0, total, '0.0', null);
   const targetStr = targetPattern.join(',');
   let attempts = 0;
