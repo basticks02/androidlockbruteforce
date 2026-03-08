@@ -3,75 +3,69 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Android Pattern Lock Brute Force Visualizer</title>
-<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&display=swap" rel="stylesheet">
+<title>Pattern Lock Brute Force</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="container">
   <!-- Left: Target Pattern -->
   <div class="panel">
-    <h1>Android Pattern Lock Brute Force</h1>
-    <h2>Set Target Pattern</h2>
-    <p class="instructions">Click dots in order to set the target pattern.<br>Minimum 4 dots. Follows real Android rules.</p>
+    <h1>Pattern Lock</h1>
+    <h2>Set Target</h2>
+    <p class="instructions">Click dots to set pattern. Min 4 dots.</p>
     <div class="grid-wrapper">
       <canvas id="targetCanvas" width="240" height="240"></canvas>
     </div>
     <div class="target-display" id="targetDisplay">No target set</div>
     <div class="controls">
-      <button id="clearTarget">Clear Target</button>
+      <button id="clearTarget" class="btn-icon btn-danger" title="Clear Target">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          <line x1="10" y1="11" x2="10" y2="17"/>
+          <line x1="14" y1="11" x2="14" y2="17"/>
+        </svg>
+      </button>
       <div class="min-length-control">
-        <label>Min pattern length:</label>
+        <label>Min:</label>
         <select id="minLength">
-          <option value="4" selected>4 dots</option>
-          <option value="5">5 dots</option>
-          <option value="6">6 dots</option>
-          <option value="7">7 dots</option>
-          <option value="8">8 dots</option>
-          <option value="9">9 dots</option>
+          <option value="4" selected>4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
         </select>
       </div>
-      <button id="startBtn" class="btn-primary" disabled>Start Brute Force</button>
-      <button id="stopBtn" class="btn-danger" disabled>Stop</button>
+      <button id="startBtn" class="btn-icon btn-primary" title="Start Brute Force" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="6 3 20 12 6 21 6 3"/>
+        </svg>
+      </button>
+      <button id="stopBtn" class="btn-icon" title="Stop" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <rect x="5" y="5" width="14" height="14" rx="2"/>
+        </svg>
+      </button>
     </div>
   </div>
   <!-- Right: Brute Force Visualization -->
   <div class="panel">
-    <h2>Brute Force Agent</h2>
-    <div class="grid-wrapper">
-      <canvas id="bruteCanvas" width="240" height="240"></canvas>
+    <h2>Agent</h2>
+    <div class="grid-wrapper grid-wrapper-lg">
+      <canvas id="bruteCanvas" width="360" height="360"></canvas>
     </div>
     <div class="speed-control">
       <label>Speed:</label>
       <input type="range" id="speedSlider" min="0" max="6" step="1" value="3">
       <span class="speed-val" id="speedLabel">100/s</span>
     </div>
-    <div class="stats" id="statsPanel">
-      <div class="stat-box">
-        <div class="label">Attempts</div>
-        <div class="value" id="attemptCount">0</div>
-      </div>
-      <div class="stat-box">
-        <div class="label">Total Patterns</div>
-        <div class="value" id="totalPatterns">—</div>
-      </div>
-      <div class="stat-box">
-        <div class="label">Elapsed</div>
-        <div class="value" id="elapsed">0.0s</div>
-      </div>
-      <div class="stat-box">
-        <div class="label">Status</div>
-        <div class="value searching" id="status">Idle</div>
-      </div>
-      <div class="stat-box full">
-        <div class="label">Current Attempt</div>
-        <div class="value" id="currentAttempt" style="font-size:16px;">—</div>
-      </div>
-    </div>
     <div class="progress-wrapper">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <div class="progress-text" id="progressText">0%</div>
     </div>
+    <div class="terminal-status" id="terminalStatus">[IDLE]</div>
     <div class="log-box" id="logBox"></div>
   </div>
 </div>
