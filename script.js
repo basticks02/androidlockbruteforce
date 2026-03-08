@@ -138,7 +138,8 @@ const targetCanvas = document.getElementById('targetCanvas');
 const targetCtx = targetCanvas.getContext('2d');
 let targetPattern = [];
 function redrawTarget() {
-  drawGrid(targetCtx, targetPattern, 240, {
+  const size = targetCanvas.width;
+  drawGrid(targetCtx, targetPattern, size, {
     lineColor: '#999',
     activeColor: '#fff',
     highlightLast: true,
@@ -157,11 +158,16 @@ function redrawTarget() {
 targetCanvas.addEventListener('click', (e) => {
   if (running) return;
   const rect = targetCanvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const size = targetCanvas.width;
+  const scaleX = size / rect.width;
+  const scaleY = size / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+  const hitRadius = (size * 14 / 240) + 6;
   for (let i = 0; i < 9; i++) {
-    const { x, y } = dotPos(i, 240);
+    const { x, y } = dotPos(i, size);
     const dist = Math.sqrt((mx - x) ** 2 + (my - y) ** 2);
-    if (dist < (240 * 14 / 240) + 6) {
+    if (dist < hitRadius) {
       if (targetPattern.includes(i)) {
         break;
       }
@@ -187,7 +193,7 @@ redrawTarget();
 // ── Brute force canvas ────────────────────────────────────────
 const bruteCanvas = document.getElementById('bruteCanvas');
 const bruteCtx = bruteCanvas.getContext('2d');
-drawGrid(bruteCtx, [], 360);
+drawGrid(bruteCtx, [], bruteCanvas.width);
 // ── Speed settings ─────────────────────────────────────────────
 const SPEED_LEVELS = [
   { label: '1/s', delay: 1000 },
@@ -285,7 +291,7 @@ async function runBruteForce() {
     }
     const matched = pattern.join(',') === targetStr;
     if (shouldDraw || matched) {
-      drawGrid(bruteCtx, pattern, 360, { highlightLast: true, found: matched });
+      drawGrid(bruteCtx, pattern, bruteCanvas.width, { highlightLast: true, found: matched });
       const patternStr = pattern.map(d => d + 1).join(' → ');
       const pct = ((attempts / total) * 100).toFixed(1);
       elProgress.style.width = pct + '%';
@@ -298,7 +304,7 @@ async function runBruteForce() {
       const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       updateTerminalStatus('FOUND', attempts, total, elapsed, pattern.map(d => d + 1).join(' → '));
       addLog(`FOUND [${pattern.map(d => d + 1).join(', ')}] in ${attempts.toLocaleString()} attempts, ${elapsed}s`, 'hit');
-      drawGrid(bruteCtx, pattern, 360, { found: true });
+      drawGrid(bruteCtx, pattern, bruteCanvas.width, { found: true });
       break;
     }
     // Pacing
@@ -332,5 +338,27 @@ async function runBruteForce() {
 }
 document.getElementById('startBtn').addEventListener('click', runBruteForce);
 document.getElementById('stopBtn').addEventListener('click', () => { stopRequested = true; });
-// Initial draw
-drawGrid(bruteCtx, [], 360);
+// ── Responsive canvas resize ──────────────────────────────────
+function resizeCanvases() {
+  const targetWrapper = targetCanvas.parentElement;
+  const targetSize = targetWrapper.clientWidth;
+  if (targetSize > 0) {
+    targetCanvas.width = targetSize;
+    targetCanvas.height = targetSize;
+    redrawTarget();
+  }
+  const bruteWrapper = bruteCanvas.parentElement;
+  const bruteSize = bruteWrapper.clientWidth;
+  if (bruteSize > 0) {
+    bruteCanvas.width = bruteSize;
+    bruteCanvas.height = bruteSize;
+    drawGrid(bruteCtx, [], bruteSize);
+  }
+}
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resizeCanvases, 150);
+});
+// Initial sizing
+resizeCanvases();
