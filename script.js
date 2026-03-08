@@ -221,6 +221,7 @@ function redrawTarget() {
 // ── Drag / touch input for target pattern ─────────────────────
 let dragging = false;
 let dragTrail = null;
+let lastDragPos = null;
 
 function getCanvasCoords(e) {
   const rect = targetCanvas.getBoundingClientRect();
@@ -246,12 +247,45 @@ function getCanvasCoords(e) {
 
 function hitTestDot(mx, my) {
   const size = targetCanvas.width;
-  const hitRadius = (size * 14 / 240) + 8;
+  // Generous hit radius for easier dragging
+  const hitRadius = (size * 14 / 240) + size * 0.06;
   for (let i = 0; i < 9; i++) {
     const { x, y } = dotPos(i, size);
     if (Math.sqrt((mx - x) ** 2 + (my - y) ** 2) < hitRadius) return i;
   }
   return -1;
+}
+
+// Check if point (px,py) is close to the line segment from (ax,ay) to (bx,by)
+function pointNearSegment(px, py, ax, ay, bx, by, threshold) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2) < threshold;
+  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = ax + t * dx, projY = ay + t * dy;
+  return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2) < threshold;
+}
+
+// Check all unvisited dots along the drag path and add any the line passes through
+function collectDotsAlongPath(fromX, fromY, toX, toY) {
+  const size = targetCanvas.width;
+  const threshold = (size * 14 / 240) + size * 0.04;
+  const visited = new Set(targetPattern);
+  // Collect dots near the drag line, sorted by distance from 'from' point
+  const candidates = [];
+  for (let i = 0; i < 9; i++) {
+    if (visited.has(i)) continue;
+    const { x, y } = dotPos(i, size);
+    if (pointNearSegment(x, y, fromX, fromY, toX, toY, threshold)) {
+      const dist = (x - fromX) ** 2 + (y - fromY) ** 2;
+      candidates.push({ dot: i, dist });
+    }
+  }
+  candidates.sort((a, b) => a.dist - b.dist);
+  for (const c of candidates) {
+    tryAddDot(c.dot);
+  }
 }
 
 function tryAddDot(dotIndex) {
@@ -276,7 +310,6 @@ function redrawTargetWithTrail() {
     found: false,
     trailTo: dragging ? dragTrail : null
   });
-  // Update display text
   const display = document.getElementById('targetDisplay');
   if (targetPattern.length === 0) {
     display.innerHTML = 'No target set';
@@ -295,6 +328,7 @@ function onDragStart(e) {
   dragging = true;
   const { x, y } = getCanvasCoords(e);
   dragTrail = { x, y };
+  lastDragPos = { x, y };
   const dot = hitTestDot(x, y);
   if (dot >= 0) tryAddDot(dot);
   redrawTargetWithTrail();
@@ -305,8 +339,11 @@ function onDragMove(e) {
   e.preventDefault();
   const { x, y } = getCanvasCoords(e);
   dragTrail = { x, y };
-  const dot = hitTestDot(x, y);
-  if (dot >= 0) tryAddDot(dot);
+  // Check for dots along the path from last position to current
+  if (lastDragPos) {
+    collectDotsAlongPath(lastDragPos.x, lastDragPos.y, x, y);
+  }
+  lastDragPos = { x, y };
   redrawTargetWithTrail();
 }
 
@@ -315,16 +352,16 @@ function onDragEnd(e) {
   e.preventDefault();
   dragging = false;
   dragTrail = null;
+  lastDragPos = null;
   redrawTargetWithTrail();
 }
 
-// Mouse events
+// Mouse: start on canvas, track moves and release on document so fast drags work
 targetCanvas.addEventListener('mousedown', onDragStart);
-targetCanvas.addEventListener('mousemove', onDragMove);
-targetCanvas.addEventListener('mouseup', onDragEnd);
-targetCanvas.addEventListener('mouseleave', onDragEnd);
+document.addEventListener('mousemove', onDragMove);
+document.addEventListener('mouseup', onDragEnd);
 
-// Touch events
+// Touch: all on canvas with passive: false to prevent scrolling
 targetCanvas.addEventListener('touchstart', onDragStart, { passive: false });
 targetCanvas.addEventListener('touchmove', onDragMove, { passive: false });
 targetCanvas.addEventListener('touchend', onDragEnd, { passive: false });
